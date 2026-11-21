@@ -64,14 +64,26 @@ def get_price(url, selector):
     return float(price_text)
 
 
-def send_email(drops):
-    # one email with all the products that got cheaper since last time
+def send_email(drops, broken):
+    # one email with the products that got cheaper and the alerts that don't work anymore
     lines = []
-    for alert, old_price, new_price in drops:
-        lines.append(f"{alert['name']}: {alert['url']} - price from {old_price} to {new_price}")
+    if drops:
+        lines.append("GOT CHEAPER:")
+        for alert, old_price, new_price in drops:
+            lines.append(f"{alert['name']}: {alert['url']} - price from {old_price} to {new_price}")
+    if broken:
+        lines.append("NOT WORKING (fix the selector or the link in the app):")
+        for alert, problem in broken:
+            lines.append(f"{alert['name']}: {alert['url']} - {problem}")
+
+    subject = []
+    if drops:
+        subject.append(f"{len(drops)} product(s) got cheaper")
+    if broken:
+        subject.append(f"{len(broken)} alert(s) not working")
 
     msg = EmailMessage()
-    msg["Subject"] = f"Price drop! {len(drops)} product(s) got cheaper"
+    msg["Subject"] = "Price Hunter: " + ", ".join(subject)
     msg["From"] = EMAIL_ADDRESS
     msg["To"] = EMAIL_TO
     msg.set_content("\n\n".join(lines))
@@ -82,15 +94,15 @@ def send_email(drops):
 
 
 def check_price(alert):
+    # gives back (price, None) if it worked, or (None, "what went wrong") if not
     try:
         price = get_price(alert["url"], alert["selector"])
-        if price is None:
-            log(f"{alert['name']}: could not find the price, check the selector")
-        return price
     except Exception as error:
         # one broken alert should not stop the others
-        log(f"{alert['name']}: error: {error}")
-        return None
+        return None, f"error: {error}"
+    if price is None:
+        return None, "could not find the price, check the selector"
+    return price, None
 
 
 def load_json(file_name, empty):
@@ -109,10 +121,13 @@ def main():
 
     history = load_json("history.json", {})
     drops = []
+    broken = []
 
     for alert in load_json("alerts.json", []):
-        price = check_price(alert)
+        price, problem = check_price(alert)
         if price is None:
+            log(f"{alert['name']}: {problem}")
+            broken.append((alert, problem))
             continue
 
         prices = history.setdefault(alert["url"], [])
@@ -136,10 +151,10 @@ def main():
     with open("history.json", "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2)
 
-    if drops:
+    if drops or broken:
         try:
-            send_email(drops)
-            log(f"email sent with {len(drops)} product(s)")
+            send_email(drops, broken)
+            log(f"email sent: {len(drops)} cheaper, {len(broken)} not working")
         except Exception as error:
             log(f"could not send the email: {error}")
 
