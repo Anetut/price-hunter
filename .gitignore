@@ -10,3 +10,8 @@ venv/
 .venv/
 
 .vscode
+
+# Your alerts and the log (personal stuff)
+alerts.json
+history.json
+log.txt
