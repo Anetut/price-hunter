@@ -1,20 +1,30 @@
+import contextlib
+import io
 import json
 import os
-import subprocess
 import sys
 import tkinter as tk
 from tkinter import messagebox
 
 from dotenv import dotenv_values
 
-from price_hunter import load_json
+# importing price_hunter also moves us to the program's folder (see the top of price_hunter.py)
+import price_hunter
 
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
+# started by windows when the pc starts: just check the prices, no window
+if "--startup" in sys.argv:
+    price_hunter.main()
+    sys.exit()
 
 STARTUP_FILE = os.path.join(os.getenv("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup\PriceHunter.bat")
-# pythonw is python without the black console window, good for running in the background
-PYTHONW = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-SCRIPT = os.path.abspath("price_hunter.py")
+
+if getattr(sys, "frozen", False):
+    # running as PriceHunter.exe
+    STARTUP_COMMAND = f'start "" "{sys.executable}" --startup'
+else:
+    # running as python gui.py, pythonw is python without the black console window
+    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    STARTUP_COMMAND = f'start "" "{pythonw}" "{os.path.abspath(__file__)}" --startup'
 
 EMAIL_FIELDS = [
     ("EMAIL_ADDRESS", "Your Gmail"),
@@ -25,7 +35,7 @@ EMAIL_FIELDS = [
 ALERT_FIELDS = [
     ("name", "Name"),
     ("url", "Product link"),
-    ("selector", "Price selector"),
+    ("selector", "Price selector (optional)"),
 ]
 
 
@@ -57,8 +67,9 @@ def read_form():
         "url": alert_entries["url"].get(),
         "selector": alert_entries["selector"].get(),
     }
+    # the selector can be empty, then it finds the price by itself (if the shop allows it)
     for name, label in ALERT_FIELDS:
-        if not alert[name]:
+        if name != "selector" and not alert[name]:
             messagebox.showerror("Oops", f"{label} can't be empty")
             return None
     return alert
@@ -102,12 +113,15 @@ def alert_clicked(event):
     alert = alerts[selected[0]]
     for name, label in ALERT_FIELDS:
         alert_entries[name].delete(0, tk.END)
-        alert_entries[name].insert(0, str(alert[name]))
+        alert_entries[name].insert(0, str(alert.get(name, "")))
 
 
 def check_all_now():
-    result = subprocess.run([sys.executable, "price_hunter.py"], capture_output=True, text=True)
-    messagebox.showinfo("Result", result.stdout + result.stderr or "No alerts yet")
+    # run the checks and catch everything they print, to show it in a popup
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        price_hunter.main()
+    messagebox.showinfo("Result", output.getvalue() or "No alerts yet")
 
 
 # ---------- check when pc starts ----------
@@ -116,7 +130,7 @@ def startup_on():
     # everything in the windows Startup folder runs when you log in
     # it runs price_hunter.py once in the background, and then it closes
     with open(STARTUP_FILE, "w") as f:
-        f.write(f'start "" "{PYTHONW}" "{SCRIPT}" --startup\n')
+        f.write(STARTUP_COMMAND + "\n")
     refresh_startup_status()
     messagebox.showinfo("Startup", "Your alerts will be checked every time the PC starts")
 
@@ -192,7 +206,7 @@ if sys.platform == "win32":
 else:
     tk.Label(startup_frame, text="This only works on Windows").pack(side="left")
 
-alerts = load_json("alerts.json", [])
+alerts = price_hunter.load_json("alerts.json", [])
 refresh_list()
 if sys.platform == "win32":
     refresh_startup_status()

@@ -17,7 +17,7 @@ for gmail you need an app password not your normal one, you can make one by acce
 ## How it works:
 Alerts are saved in alerts.json.
 Check all now checks everything right away and shows you the result.
-Check when pc starts: press turn on and your alerts get checked every time you start the pc. It puts a small file in the windows startup folder that runs price_hunter.py once (no window), checks everything, sends the email and closes. Turn off removes the file. Everything goes in log.txt so look there to see what happened.
+Check when pc starts: press turn on and your alerts get checked every time you start the pc. It puts a small file in the windows startup folder that runs the checks once (no window), checks everything, sends the email and closes. Turn off removes the file. Everything goes in log.txt so look there to see what happened.
 
 Note: if it stops finding the price its probably because the website changed their layout, just put the new css selector in the alert. To find it right click the price in chrome > inspect and look at the class
 

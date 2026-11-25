@@ -8,16 +8,14 @@ from email.message import EmailMessage
 
 import requests
 from bs4 import BeautifulSoup
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
-# work from the project folder, so the files are found even when windows starts the script
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
-
-# email settings come from .env, the alerts come from alerts.json
-load_dotenv()
-EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
-EMAIL_TO = os.getenv("EMAIL_TO", "")
+# work from the program's folder, so the files are found even when windows starts it
+# when it runs as PriceHunter.exe, __file__ is in a temporary folder, so use the exe's folder instead
+if getattr(sys, "frozen", False):
+    os.chdir(os.path.dirname(sys.executable))
+else:
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # some websites block requests that don't look like a browser
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -42,15 +40,55 @@ def get_price(url, selector):
 
     soup = BeautifulSoup(response.text, "html.parser")
 
+    # 1. try the hidden product data first, it doesn't need a selector
+    price = find_json_ld_price(soup)
+    if price is not None:
+        return price
+
+    # 2. if the shop doesn't have it, use the selector (if the alert has one)
+    if not selector:
+        return None
     price_tag = soup.select_one(selector)
     if price_tag is None:
         return None
+    return parse_price(price_tag.get_text())
 
+
+def find_json_ld_price(soup):
+    # many shops hide the product info for google in <script type="application/ld+json">
+    # it looks like: {"@type": "Product", "offers": {"price": "3599.99", "priceCurrency": "RON"}}
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            # strict=False because some shops (like emag) have line breaks inside the text, which normal json doesn't allow
+            data = json.loads(script.get_text(), strict=False)
+        except ValueError:
+            continue
+
+        # it can be one item, a list of items, or a list inside "@graph"
+        if isinstance(data, dict):
+            items = data.get("@graph", [data])
+        else:
+            items = data
+
+        for item in items:
+            if not isinstance(item, dict) or "Product" not in str(item.get("@type")):
+                continue
+            offers = item.get("offers")
+            # some shops have a list of offers, then take the first one
+            if isinstance(offers, list) and offers:
+                offers = offers[0]
+            if isinstance(offers, dict):
+                price = offers.get("price") or offers.get("lowPrice")
+                if price is not None:
+                    return parse_price(str(price))
+    return None
+
+
+def parse_price(text):
     # keep only digits, dots and commas: "3.599,99 Lei" -> "3.599,99"
-    price_text = price_tag.get_text()
-    price_text = "".join(c for c in price_text if c.isdigit() or c in ".,")
+    price_text = "".join(c for c in text if c.isdigit() or c in ".,")
 
-    # the tag has no number in it (like "price unavailable"), so treat it like no price found
+    # no number in it (like "price unavailable"), so treat it like no price found
     if not any(c.isdigit() for c in price_text):
         return None
 
@@ -82,26 +120,34 @@ def send_email(drops, broken):
     if broken:
         subject.append(f"{len(broken)} alert(s) not working")
 
+    # read the email settings now, so changes saved in the app are used right away
+    settings = dotenv_values(".env")
+    email_address = settings.get("EMAIL_ADDRESS") or ""
+    email_password = settings.get("EMAIL_PASSWORD") or ""
+
     msg = EmailMessage()
     msg["Subject"] = "Price Hunter: " + ", ".join(subject)
-    msg["From"] = EMAIL_ADDRESS
-    msg["To"] = EMAIL_TO
+    msg["From"] = email_address
+    msg["To"] = settings.get("EMAIL_TO") or ""
     msg.set_content("\n\n".join(lines))
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+        server.login(email_address, email_password)
         server.send_message(msg)
 
 
 def check_price(alert):
     # gives back (price, None) if it worked, or (None, "what went wrong") if not
     try:
-        price = get_price(alert["url"], alert["selector"])
+        # .get() because the selector is optional now, old alerts always have one
+        price = get_price(alert["url"], alert.get("selector", ""))
     except Exception as error:
         # one broken alert should not stop the others
         return None, f"error: {error}"
     if price is None:
-        return None, "could not find the price, check the selector"
+        if alert.get("selector"):
+            return None, "could not find the price, check the selector"
+        return None, "could not find the price by itself, add a price selector in the app"
     return price, None
 
 

@@ -15,3 +15,8 @@ venv/
 alerts.json
 history.json
 log.txt
+
+# Built exe (PyInstaller)
+build/
+dist/
+*.spec
